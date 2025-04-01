@@ -28,7 +28,7 @@
       "environments": [
         "edit"
       ],
-      "url": "https://main--milo--adobecom.hlx.page/tools/loc/index.html?project=dc--adobecom",
+      "url": "https://main--milo--adobecom.aem.page/tools/loc/index.html?project=dc--adobecom",
       "passReferrer": true,
       "passConfig": true,
       "excludePaths": [ "/**" ],
@@ -39,7 +39,7 @@
       "id": "localize-2",
       "title": "Localize (V2)",
       "environments": [ "edit" ],
-      "url": "https://main--dc-graybox--adobecom.hlx.page/tools/loc?milolibs=locui",
+      "url": "https://main--dc-graybox--adobecom.aem.page/tools/loc?milolibs=locui",
       "passReferrer": true,
       "passConfig": true,
       "includePaths": [ "**.xlsx**" ]
@@ -49,7 +49,7 @@
       "id": "graybox-promote",
       "title": "Graybox Promote",
       "environments": [ "edit" ],
-      "url": "https://main--dc-graybox--adobecom.hlx.page/tools/graybox-promote?milolibs=grayboxui",
+      "url": "https://main--dc-graybox--adobecom.aem.page/tools/graybox-promote?milolibs=grayboxui",
       "isPalette": true,
       "passReferrer": true,
       "passConfig": true,
@@ -160,7 +160,7 @@
       "id": "bulk",
       "title": "Bulk operations",
       "environments": [ "edit", "dev", "preview", "live" ],
-      "url": "https://main--dc--adobecom.hlx.page/tools/bulk-publish"
+      "url": "https://main--dc--adobecom.aem.page/tools/bulk-publish"
     }
   ]
 }
