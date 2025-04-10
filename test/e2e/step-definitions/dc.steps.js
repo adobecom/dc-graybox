@@ -22,7 +22,9 @@ import { PdfEditorPage } from "../page-objects/pdfeditor.page";
 import { MergePdfPage } from "../page-objects/mergepdf.page";
 import { CompressPdfPage } from "../page-objects/compresspdf.page";
 import { PasswordProtectPdfPage } from "../page-objects/passwordprotectpdf.page";
+import { AddPdfPageNumbersPage } from "../page-objects/addpdfpagenumbers.page";
 import { FrictionlessPage } from "../page-objects/frictionless.page";
+import { UnityPage } from "../page-objects/unity.page";
 import { DCPage } from "../page-objects/dc.page";
 import { cardinal } from "../support/cardinal";
 import { expect } from "@playwright/test";
@@ -59,7 +61,8 @@ Then(/^I go to the ([^\"]*) page$/, async function (verb) {
     "pdf-editor": PdfEditorPage,
     "merge-pdf": MergePdfPage,
     "compress-pdf": CompressPdfPage,
-    "password-protect-pdf": PasswordProtectPdfPage
+    "password-protect-pdf": PasswordProtectPdfPage,
+    "add-pdf-page-numbers": AddPdfPageNumbersPage
   }[verb];
   this.page = new pageClass();
 
@@ -626,3 +629,235 @@ Then(/^I switch to the new page$/, async function () {
   await newPage.bringToFront();
   this.page.native = newPage;
 })
+
+Then(/^I record phone number on the page$/, async function () {
+  this.phoneNumber = await this.page.native.locator("a[daa-ll^='Device Phone']").textContent();
+  console.log("Phone number without geo-ip:", this.phoneNumber);
+})
+
+Then(/^I go to the page "([^"]*)" with geo-ip spoof "([^"]*)"$/, async function (pageUrl, akamaiLocale) {
+  this.page = new DCPage(pageUrl + '?akamaiLocale=' + akamaiLocale);
+  await this.page.open();
+})
+
+Then(/^I confirm phone number is different and has geo-ip value "([^"]*)"$/, async function (geoIpPhoneNumberValue) {
+  const geoIpPhoneNumber = await this.page.native.locator("a[daa-ll^='Device Phone']").textContent();
+  console.log("Phone number with geo-ip:", geoIpPhoneNumber);
+  expect(this.phoneNumber).not.toEqual(geoIpPhoneNumber);
+  expect(geoIpPhoneNumber).toEqual(geoIpPhoneNumberValue);
+})
+
+Then(/^I (try to |)choose the (?:PDF|file|files) "([^\"]*)" to upload$/, async function (tryTo, filePath) {
+  this.context(UnityPage);
+  const filePaths = filePath.split(",");
+  const absPaths = filePaths.map((x) => {
+    const absPath = path.resolve(global.config.profile.site, x);
+    // git hack to make the file empty
+    if (/empty\.[a-zA-Z]*/.test(x)) {
+      fs.writeFileSync(absPath, ''); 
+    } else if (/bad\.[a-zA-Z]*/.test(x)) {
+      fs.writeFileSync(absPath, 'bad'); 
+    }
+    return absPath;
+  });
+  let retry = 8;
+  let loadDelay = 5000;
+  while (retry > 0) {
+    try {
+      if (retry < 6 && retry % 2 === 0) {
+        await this.page.native.reload({waitUntil: 'load'});
+        await this.page.native.waitForTimeout(loadDelay);
+        loadDelay += 2000;
+      }      
+      await expect(this.page.selectButton).toHaveCount(1, { timeout: 15000 });
+      await this.page.chooseFiles(absPaths);
+      if (tryTo !== '') {
+        break;
+      }
+      await expect(this.page.splashLoader).toHaveCount(1, { timeout: 5000 });
+      retry = 0;
+    } catch {
+      retry--;
+    }
+  }
+});
+
+Then(/^I drag-and-drop the (?:PDF|file|files) "([^\"]*)" to upload$/, async function (filePath) {
+  this.context(UnityPage);
+  const filePaths = filePath.split(",");
+  const absPaths = filePaths.map((x) =>
+    path.resolve(global.config.profile.site, x)
+  );
+  let retry = 3;
+  while (retry > 0) {
+    await expect(this.page.selectButton).toHaveCount(1, { timeout: 15000 });
+    await this.page.native.waitForTimeout(2000);
+    try {
+      await this.page.dragndropFiles(absPaths);
+      await this.page.native.waitForTimeout(2000);
+      await expect(this.page.selectButton).toHaveCount(0, { timeout: 15000 });
+      retry = 0;
+    } catch {
+      retry--;
+    }
+  }
+});
+
+Then(/^I sign in as a (type1free|type2|type1paid) user$/, async function (type) {
+  const accounts = JSON.parse(fs.readFileSync(".auth/accounts.json", "utf8"));
+  const account = accounts[type];
+  const url = global.config.profile.profile === 'prod' ? 'https://www.adobe.com' : 'https://www.stage.adobe.com';
+  this.page = new DCPage(url);
+  await this.page.open();
+  await this.page.native.locator(".profile-comp").click();
+  await this.page.native.locator("#EmailPage-EmailField").type(account.email + '\n');
+  await this.page.native.waitForTimeout(2000);
+  await this.page.native.locator(".spectrum-Button--cta").click();
+  await this.page.native.locator("#PasswordPage-PasswordField").type(account.password + '\n');
+  await this.page.native.waitForTimeout(2000);
+  try {
+    await this.page.native.locator(".spectrum-Button--cta").click();
+  } catch {
+  }
+});
+
+Then(/^I should see "([^"]*)" in the dropzone$/, async function (text) {
+  this.context(UnityPage);
+  await expect(this.page.native.locator('h1#lifecycle-drop-zone')).toHaveText(text);
+});
+
+Then(/^I have tried "compress-pdf" twice$/, async function () {
+  this.context(UnityPage);
+  const cookieExp = new Date(Date.now() + 90 * 1000).toUTCString();
+  await this.page.native.evaluate((exp) => {
+    document.cookie = `p_ac_cm_p_ops=1;domain=.adobe.com;path=/;expires=${exp}`;
+    document.cookie = `s_ta_cm_p_ops=1;domain=.adobe.com;path=/;expires=${exp}`;
+  }, cookieExp);
+  await this.page.native.reload({waitUntil: 'load'});
+});
+
+Then(/^I sign in as a (type1free|type2|type1paid) user using SUSI Light$/, async function (type) {
+  const accounts = JSON.parse(fs.readFileSync(".auth/accounts.json", "utf8"));
+  const account = accounts[type];
+  await this.page.native.locator('susi-sentry-light #sentry-email-field').click();
+  await this.page.native.locator('susi-sentry-light #sentry-email-field').type(account.email + '\n');
+  await this.page.native.waitForTimeout(2000);
+  await this.page.native.locator("#PasswordPage-PasswordField").type(account.password + '\n');
+  await this.page.native.waitForTimeout(2000);
+  try {
+    await this.page.native.locator(".spectrum-Button--cta").click();
+  } catch {
+  }
+});
+
+Then(/^I should see "([^"]*)" in the error message$/, async function (text) {
+  this.context(UnityPage);
+  await expect(this.page.verbErrorText).toHaveText(text, {timeout: 10000});
+});
+
+Then(/^I click the "([^"]*)" button on the feedback$/, async function (button) {
+  this.context(UnityPage);
+  await this.page.widgetCompressButton.click();
+});
+
+Then(/^I should see "([^"]*)" in the widget error toast$/, async function (text) {
+  this.context(UnityPage);
+  await expect(this.page.widgetToast).toHaveText(text);
+});
+
+Then(/^I should see "([^"]*)" in the widget upsell heading$/, async function (text) {
+  this.context(UnityPage);
+  await expect(this.page.widgetUpsellHeading).toHaveText(text);
+});
+
+Then(/^I should see the paywall$/, async function () {
+  this.context(UnityPage);
+  await expect(this.page.paywall).toBeVisible({timeout: 30000});
+});
+
+async function signInWithAdobe(page, type) {
+  const accounts = JSON.parse(fs.readFileSync(".auth/accounts.json", "utf8"));
+  const account = accounts[type];
+  await page.native.locator("#EmailPage-EmailField").type(account.email);
+  await page.native.locator("#EmailPage-EmailField").press('Enter');
+  try {
+    await expect(page.native.locator("#PasswordPage-PasswordField")).toBeVisible({timeout: 5000});
+  } catch {
+    await page.native.locator(".spectrum-Button--cta").click();
+  }
+  await page.native.locator("#PasswordPage-PasswordField").type(account.password);
+  await page.native.locator("#PasswordPage-PasswordField").press('Enter');
+  await page.native.waitForTimeout(2000);
+  try {
+    await expect(page.native.locator(".spectrum-Button--cta")).toBeEnabled({timeout: 5000});
+    await page.native.locator(".spectrum-Button--cta").click();
+  } catch {
+  } 
+}
+
+Then(/^I continue with Adobe as a (type1free|type2|type1paid) user$/, async function (type) {
+  this.context(UnityPage);
+  await this.page.continueWithAdobeButton.click();
+  let retry = 3;
+  while (retry > 0) {
+    try {
+      await expect(this.page.native.locator("#EmailPage-EmailField")).toBeVisible({timeout: 5000});
+      retry = 0;
+    } catch {
+      await this.page.continueWithAdobeButton.click();
+      retry--;
+    }
+  }
+  await signInWithAdobe(this.page, type); 
+});
+
+Then(/^I should see the download button$/, async function () {
+  this.context(UnityPage);
+  await expect(this.page.native.locator('button[data-test-id="gnav-download-button"]')).toBeVisible({timeout: 20000});
+});
+
+Then(/^I click the "(Cancel|Continue)" button on the top$/, async function (button) {
+  this.context(UnityPage);
+  if (button === 'Cancel') {
+    await this.page.dcWebCancelButton.click({timeout: 20000});
+  } else {
+    await this.page.dcWebContinueButton.click({timeout: 20000});
+  }
+});
+
+Then(/^I click the "([^"]*)" button$/, async function (button) {
+  this.context(UnityPage);
+  await this.page.dcWebButton(button).click({timeout: 20000});
+});
+
+Then(/^I select the split divider$/, async function () {
+  this.context(UnityPage);
+  await this.page.dcWebSplitPageButton.click({timeout: 20000});
+  let retry = 3;
+  while (retry > 0) {
+    try {
+      await expect(this.page.dcWebSplitPageTooltip).toBeVisible({timeout: 5000});
+      await this.page.native.waitForTimeout(1000);
+      retry = 0;
+    } catch (e) {
+      console.log(e);
+      await this.page.dcWebSplitPageButton.click({timeout: 20000});
+      retry--;
+    }
+  }
+});
+
+Then(/^I should see the "([^"]*)" tooltip$/, async function (tooltip) {
+  this.context(UnityPage);
+  await expect(this.page.dcWebSplitPageTooltip).toHaveText(tooltip);
+});
+
+Then(/^I should see the "Your Documents" folder$/, async function () {
+  this.context(UnityPage);
+  await expect(this.page.dcWebYourDocuments).toBeVisible({timeout: 20000});
+});
+
+Then(/^I should see the save button$/, async function () {
+  this.context(UnityPage);
+  await expect(this.page.dcWebContinueButton).toBeVisible({timeout: 20000});
+});

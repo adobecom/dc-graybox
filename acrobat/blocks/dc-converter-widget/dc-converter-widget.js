@@ -53,7 +53,7 @@ const localeMap = {
   ua: 'uk-ua',
   au: 'en-au',
   hk_en: 'en-hk',
-  in: 'en-us',
+  in: 'en-in',
   in_hi: 'hi-in',
   nz: 'en-nz',
   hk_zh: 'zh-hant-hk',
@@ -112,6 +112,8 @@ const verbRedirMap = {
   'png-to-pdf': 'jpgtopdf',
   'number-pages': 'number',
   'ocr-pdf': 'ocr',
+  'chat-pdf': 'chat',
+  'chat-pdf-student': 'study',
 };
 
 const exhLimitCookieMap = {
@@ -135,19 +137,21 @@ const langFromPath = url.pathname.split('/')[1];
 const pageLang = localeMap[langFromPath] || 'en-us';
 
 export default async function init(element) {
+  if (document.querySelector('div[data-section="widget"]')) return;
   element.closest('main > div').dataset.section = 'widget';
   const widget = element;
   const DC_WIDGET_VERSION_FALLBACK = '3.7.1_2.14.0';
   const DC_GENERATE_CACHE_VERSION_FALLBACK = '2.14.0';
   const STG_DC_WIDGET_VERSION = document.querySelector('meta[name="stg-dc-widget-version"]')?.getAttribute('content');
   const STG_DC_GENERATE_CACHE_VERSION = document.querySelector('meta[name="stg-dc-generate-cache-version"]')?.getAttribute('content');
+  const IMS_GUEST = document.querySelector('meta[name="ims-guest"]')?.content;
 
   let DC_DOMAIN = 'https://dev.acrobat.adobe.com';
   let DC_WIDGET_VERSION = document.querySelector('meta[name="dc-widget-version"]')?.getAttribute('content');
   let DC_GENERATE_CACHE_VERSION = document.querySelector('meta[name="dc-generate-cache-version"]')?.getAttribute('content');
   const lanaOptions = {
     sampleRate: 1,
-    tags: 'Cat=DxDC_Frictionless,origin=milo',
+    tags: 'DC_Milo,Frictionless',
   };
   // LANA
   window.dcwErrors = [];
@@ -197,8 +201,7 @@ export default async function init(element) {
   if (window?.browser?.name === 'Internet Explorer'
     || (window?.browser?.name === 'Microsoft Edge' && window?.browser?.version?.split('.')[0] < 86)
     || (window?.browser?.name === 'Microsoft Edge' && !window?.browser?.version)
-    || (window?.browser?.name === 'Safari' && window?.browser?.version?.split('.')[0] < 14)
-    || (window?.browser?.name === 'Safari' && !window?.browser?.version)) {
+    || (window?.browser?.name === 'Safari' && window?.browser?.version?.split('.')[0] < 14)) {
     window.location.href = EOLBrowserPage;
   }
 
@@ -231,7 +234,7 @@ export default async function init(element) {
   const preRenderDropZone = !isLimitExhausted && !isRedirection;
 
   const INLINE_SNIPPET = widget.querySelector(':scope > section#edge-snippet');
-  if (INLINE_SNIPPET) {
+  if (INLINE_SNIPPET && INLINE_SNIPPET.childNodes.length > 0) {
     if (!isLimitExhausted) {
       widgetContainer.dataset.rendered = 'true';
       widgetContainer.appendChild(...INLINE_SNIPPET.childNodes);
@@ -244,11 +247,16 @@ export default async function init(element) {
       case 200: {
         const template = await response.text();
         if (!('rendered' in widgetContainer.dataset)) {
-          widgetContainer.dataset.rendered = 'true';
-          const doc = new DOMParser().parseFromString(template, 'text/html');
-          document.head.appendChild(doc.head.getElementsByTagName('Style')[0]);
-          widgetContainer.appendChild(doc.body.firstElementChild);
-          performance.mark('milo-insert-snippet');
+          try {
+            widgetContainer.dataset.rendered = 'true';
+            const doc = new DOMParser().parseFromString(template, 'text/html');
+            document.head.appendChild(doc.head.getElementsByTagName('Style')[0]);
+            widgetContainer.appendChild(doc.body.firstElementChild);
+            performance.mark('milo-insert-snippet');
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.error(`Error: ${e.message}`);
+          }
         }
         break;
       }
@@ -277,9 +285,14 @@ export default async function init(element) {
   dcScript.dataset.verb = VERB;
   dcScript.dataset.load_typekit = 'false';
   dcScript.dataset.load_imslib = 'false';
+  dcScript.dataset.log_perf = 'true';
   dcScript.dataset.enable_unload_prompt = 'true';
   if (preRenderDropZone) {
     dcScript.dataset.pre_rendered = 'true'; // TODO: remove this line
+  }
+  const isFromChromeExtension = /x_api_client_id=chrome_extension/.test(window.location.search);
+  if (IMS_GUEST && !isRedirection && !isFromChromeExtension) {
+    dcScript.dataset.ims_guests = 'true';
   }
 
   widget.appendChild(dcScript);
@@ -318,10 +331,31 @@ export default async function init(element) {
         ocrPDF: canNotUpload || (val.ocr_pdf && !val.ocr_pdf.can_process),
       };
       window.doccloudPersonalization = doccloudPersonalization;
+
+      const downloadStatus = doccloudPersonalization.download?.can_download ? 'can_download' : 'cannot_download';
+      localStorage.setItem('frictionless.download', downloadStatus);
       // Personalization Ready Event
       const personalizationIsReady = new CustomEvent('Personalization:Ready');
 
       window.dispatchEvent(personalizationIsReady);
+    }).catch((err) => {
+      window.dispatchEvent(new CustomEvent('DC_Hosted:Error', { detail: { wrappedException: err } }));
     });
+  });
+
+  window.addEventListener('DC_Hosted:Error', (err) => {
+    const dropZone = document.querySelector('.dropZoneContent');
+    if (dropZone && !dropZone.classList.contains('unavailable')) {
+      dropZone.classList.add('unavailable');
+      dropZone.style.pointerEvents = 'none';
+      dropZone.parentElement.style.border = 'none';
+      document.querySelector('h1').textContent = 'Currently unavailable';
+      dropZone.innerHTML = '<img src="/acrobat/img/icons/error.svg"><p>We apologize for the inconvenience. We are working hard to make the service available. Please check back shortly.</p>';
+      document.querySelector('div[class*="DropZoneFooter__dropzoneFooter"]').innerHTML = '';
+    }
+    const { cause, message, name, type } = err.detail?.wrappedException || {};
+    // eslint-disable-next-line prefer-template
+    const info = `DC Widget failed. type=${type} name=${name} message=${message}` + (cause ? ` cause.message=${cause.message}` : '');
+    window.lana?.log(info, lanaOptions);
   });
 }
